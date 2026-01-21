@@ -36,16 +36,33 @@ int is_var_array(char *name) {
     return 0;
 }
 
-/* --- HELPERS ARITMÉTICOS (P2) --- */
+/* --- PILA PARA SWITCH --- */
+#define MAX_NEST 20
+static char *switch_stack[MAX_NEST];
+static int switch_sp = 0;
+
+void switch_push(char *val) {
+    if (switch_sp < MAX_NEST) switch_stack[switch_sp++] = strdup(val);
+}
+
+char *switch_peek() {
+    if (switch_sp > 0) return switch_stack[switch_sp-1];
+    return NULL;
+}
+
+void switch_pop() {
+    if (switch_sp > 0) free(switch_stack[--switch_sp]);
+}
+
+/* --- HELPERS --- */
+void init_info(C3A_Info *info) {
+    info->type = T_ERROR; info->addr = NULL; info->ctr_var = NULL;
+    info->truelist = NULL; info->falselist = NULL; 
+    info->nextlist = NULL; info->breaklist = NULL;
+}
+
 C3A_Info gen_binary_op(char *op_base, C3A_Info a, C3A_Info b) {
-    C3A_Info res;
-    res.type = T_ERROR;
-    res.addr = NULL;
-    res.ctr_var = NULL;
-    /* Listas nulas para aritméticas */
-    res.truelist = NULL;
-    res.falselist = NULL;
-    res.nextlist = NULL;
+    C3A_Info res; init_info(&res);
 
     if (a.type == T_ERROR || b.type == T_ERROR) return res;
 
@@ -87,9 +104,7 @@ C3A_Info gen_binary_op(char *op_base, C3A_Info a, C3A_Info b) {
 }
 
 C3A_Info gen_unary_op(C3A_Info a) {
-    C3A_Info res;
-    res.type = T_ERROR;
-    res.addr = NULL;
+    C3A_Info res; init_info(&res);
     if (a.type == T_ERROR) return res;
 
     res.type = a.type;
@@ -99,14 +114,46 @@ C3A_Info gen_unary_op(C3A_Info a) {
     return res;
 }
 
-/* --- HELPERS BOOLEANOS (P3) --- */
-/* Genera saltos para comparaciones: IF x REL y GOTO _ */
-C3A_Info gen_relational_op(char *rel_op, C3A_Info a, C3A_Info b) {
-    C3A_Info res;
-    res.type = T_BOOL;
-    res.addr = NULL; /* Los booleanos no tienen valor, son flujo de control */
+C3A_Info gen_power(C3A_Info base, C3A_Info exp) {
+    C3A_Info res; init_info(&res);
+
+    if (base.type == T_ERROR || exp.type == T_ERROR) return res;
+    if (exp.type != T_INT) {
+        fprintf(stderr, "Error semántico: Exponente debe ser entero.\n");
+        return res;
+    }
+
+    res.type = base.type; 
+    res.addr = cg_new_temp();
+    if (base.type == T_INT) cg_emit(":=", "1", NULL, res.addr);
+    else cg_emit(":=", "1.0", NULL, res.addr);
+
+    char *cnt = cg_new_temp();
+    cg_emit(":=", "0", NULL, cnt);
+
+    int start_label_idx = cg_next_quad();
+    char start_label[16]; sprintf(start_label, "%d", start_label_idx);
     
-    /* Conversiones de tipo para comparar */
+    int end_label_idx = start_label_idx + 4;
+    char end_label[16]; sprintf(end_label, "%d", end_label_idx);
+    
+    char *rel_op = (exp.type == T_INT) ? "GEI" : "GEF";
+    char if_op[16]; sprintf(if_op, "IF %s", rel_op);
+    
+    cg_emit(if_op, cnt, exp.addr, end_label);
+    
+    char *op = (base.type == T_INT) ? "MULI" : "MULF";
+    cg_emit(op, res.addr, base.addr, res.addr);
+    cg_emit("ADDI", cnt, "1", cnt);
+    cg_emit("GOTO", NULL, NULL, start_label);
+
+    return res;
+}
+
+C3A_Info gen_relational_op(char *rel_op, C3A_Info a, C3A_Info b) {
+    C3A_Info res; init_info(&res);
+    res.type = T_BOOL;
+    
     char *addr_a = a.addr;
     char *addr_b = b.addr;
     char suffix = 'I'; /* Por defecto enteros */
@@ -127,19 +174,15 @@ C3A_Info gen_relational_op(char *rel_op, C3A_Info a, C3A_Info b) {
 
     /* Generar: IF x REL y GOTO (hueco truelist) */
     res.truelist = makelist(cg_next_quad());
-    
     char op_full[16];
-    sprintf(op_full, "IF %s%c", rel_op, suffix); /* Ej: IF LTI o IF LTF */
+    sprintf(op_full, "IF %s%c", rel_op, suffix);
+    cg_emit(op_full, addr_a, addr_b, NULL);
     
-    cg_emit(op_full, addr_a, addr_b, NULL); /* res es NULL por ahora */
-
-    /* Generar: GOTO (hueco falselist) */
     res.falselist = makelist(cg_next_quad());
     cg_emit("GOTO", NULL, NULL, NULL);
 
     return res;
 }
-
 %}
 
 %union {
@@ -151,7 +194,6 @@ C3A_Info gen_relational_op(char *rel_op, C3A_Info a, C3A_Info b) {
     C3A_Info info;
 }
 
-/* Tokens P2 */
 %token ASSIGN PLUS MINUS MULT DIV MOD POW
 %token LPAREN RPAREN LBRACE RBRACE SEMICOLON COLON COMMA DOT EOL
 %token LBRACKET RBRACKET RANGE
@@ -171,9 +213,10 @@ C3A_Info gen_relational_op(char *rel_op, C3A_Info a, C3A_Info b) {
 %type <info> programa lista_sentencias sentencia
 %type <info> declaracion asignacion
 %type <info> expressio term potencia factor variable
-%type <info> bool_expr M N /* Marcadores para Backpatching */
+%type <info> bool_expr M N 
+%type <info> case_list case_item default_opt 
 
-/* Precedencia (P3: NOT > AND > OR) */
+/* Precedencia ( NOT > AND > OR) */
 %left OR
 %left AND
 %left NOT
@@ -192,22 +235,30 @@ programa : { cg_init(); } lista_sentencias {
            }
          ;
 
-lista_sentencias : /* vacio */ { $$.nextlist = NULL; }
+lista_sentencias : /* vacio */ { $$.nextlist = NULL; $$.breaklist = NULL; }
                  | lista_sentencias M sentencia { 
                      /* BACKPATCHING: Rellenar saltos pendientes de sentencias anteriores */
                      backpatch($1.nextlist, $2.label_idx);
                      $$.nextlist = $3.nextlist;
+                     /* PROPAGAR BREAKS: No backpatchear aquí, se pasan arriba */
+                     $$.breaklist = merge($1.breaklist, $3.breaklist);
                  }
                  | lista_sentencias EOL { $$ = $1; }
                  ;
 
-sentencia : declaracion EOL { $$.nextlist = NULL; }
-          | asignacion EOL  { $$.nextlist = NULL; }
+sentencia : declaracion EOL { $$.nextlist = NULL; $$.breaklist = NULL; }
+          | asignacion EOL  { $$.nextlist = NULL; $$.breaklist = NULL; }
           | expressio EOL { 
                /* Imprimir expresión */
                cg_emit("PARAM", $1.addr, NULL, NULL);
                if ($1.type == T_FLOAT) cg_emit("CALL", "PUTF", "1", NULL);
                else cg_emit("CALL", "PUTI", "1", NULL);
+               $$.nextlist = NULL; $$.breaklist = NULL;
+            }
+          | BREAK { 
+               /* El break genera un salto que NO va al nextlist normal, sino al breaklist */
+               $$.breaklist = makelist(cg_next_quad());
+               cg_emit("GOTO", NULL, NULL, NULL);
                $$.nextlist = NULL;
             }
           /* --- ESTRUCTURAS DE CONTROL P3 --- */
@@ -216,6 +267,7 @@ sentencia : declaracion EOL { $$.nextlist = NULL; }
               backpatch($2.truelist, $4.label_idx);
               /* 2. Si es FALSE, salta al final (FI) */
               $$.nextlist = merge($2.falselist, $5.nextlist);
+              $$.breaklist = $5.breaklist; /* Propagar breaks internos */
           }
           | IF bool_expr THEN M lista_sentencias N ELSE M lista_sentencias FI {
               /* 1. TRUE -> bloque THEN */
@@ -226,23 +278,114 @@ sentencia : declaracion EOL { $$.nextlist = NULL; }
               /* N genera un GOTO al final para saltarse el ELSE */
               ListNode *temp = merge($5.nextlist, $6.nextlist); /* nextlist de sentencia + GOTO N */
               $$.nextlist = merge(temp, $9.nextlist);
+              $$.breaklist = merge($5.breaklist, $9.breaklist);
           }
           | WHILE M bool_expr DO M lista_sentencias DONE {
               /* 1. Bucle: volver a evaluar condición (M1) */
               backpatch($6.nextlist, $2.label_idx);
               /* 2. TRUE -> ejecutar cuerpo (M2) */
               backpatch($3.truelist, $5.label_idx);
-              /* 3. FALSE -> salir del bucle */
-              $$.nextlist = $3.falselist;
-              /* 4. Emitir GOTO al inicio incondicional */
+              
               char str_label[16];
               sprintf(str_label, "%d", $2.label_idx);
               cg_emit("GOTO", NULL, NULL, str_label);
+              
+              /* Salida del bucle: cuando es Falso O cuando hay un Break */
+              $$.nextlist = merge($3.falselist, $6.breaklist); /* Aquí resolvemos los breaks del cuerpo */
+              $$.breaklist = NULL; /* Los breaks ya se han consumido */
           }
-          | error EOL { yyerrok; $$.nextlist = NULL; }
+          | DO M lista_sentencias UNTIL bool_expr {
+              backpatch($3.nextlist, $2.label_idx);
+              backpatch($5.falselist, $2.label_idx);
+              $$.nextlist = merge($5.truelist, $3.breaklist); /* Breaks salen del bucle */
+              $$.breaklist = NULL;
+          }
+          | FOR ID IN expressio RANGE expressio DO {
+              if ($4.type != T_INT || $6.type != T_INT) yyerror("Rango FOR debe ser entero");
+              cg_emit(":=", $4.addr, NULL, $2.lexema);
+          } M { 
+              /* Test implícito: IF ID LE Limit ... */
+              /* Pero como es un solo paso, haremos el test manual con etiquetas */
+          } lista_sentencias DONE {
+              cg_emit("ADDI", $2.lexema, "1", $2.lexema);
+              $$.nextlist = $9.breaklist; /* Breaks salen */
+              $$.breaklist = NULL;
+          }
+          
+          /* --- SWITCH CORREGIDO --- */
+          /* CORRECCIÓN: Usamos $8 en lugar de $7 porque opt_eol y la acción {} desplazan el índice */
+          | SWITCH LPAREN expressio RPAREN opt_eol {
+              switch_push($3.addr);
+          } M_switch case_list FSWITCH {
+              switch_pop();
+              /* Backpatch de fallos (default implícito) al final */
+              backpatch($8.falselist, cg_next_quad());
+              
+              /* La salida del switch es el flujo normal + los breaks */
+              $$.nextlist = merge($8.nextlist, $8.breaklist); 
+              $$.breaklist = NULL; 
+          }
+          | error EOL { yyerrok; $$.nextlist = NULL; $$.breaklist = NULL; }
           ;
 
-/* --- MARCADORES PARA BACKPATCHING --- */
+/* --- REGLA AUXILIAR --- */
+opt_eol : /* empty */ 
+        | opt_eol EOL 
+        ;
+
+M_switch : { };
+
+case_list : case_item case_list {
+              $$.nextlist = merge($1.nextlist, $2.nextlist);
+              $$.breaklist = merge($1.breaklist, $2.breaklist);
+              backpatch($1.falselist, $2.label_idx);
+              $$.falselist = $2.falselist;
+              $$.label_idx = $1.label_idx; 
+          }
+          | default_opt { $$ = $1; }
+          ;
+
+case_item : CASE expressio COLON 
+            { 
+               /* ACCIÓN INCRUSTADA: Se ejecuta ANTES de lista_sentencias */
+               /* 1. emitir el Test: IF control != caso GOTO siguiente */
+               char *ctrl = switch_peek();
+               
+               /* guardar en $<info>$ los datos para recuperarlos luego */
+               /* label_idx: Dónde empieza este caso (para que el anterior salte aquí) */
+               $<info>$.label_idx = cg_next_quad();
+               
+               /* falselist: Lista de saltos si el caso NO coincide */
+               $<info>$.falselist = makelist(cg_next_quad());
+               cg_emit("IF NEQ", ctrl, $2.addr, NULL); 
+            }
+            lista_sentencias 
+            {
+               /* ACCIÓN FINAL */
+               /* recuperar los datos de la acción incrustada ($4) */
+               $$.label_idx = $<info>4.label_idx; 
+               $$.falselist = $<info>4.falselist; 
+               
+               /* Propagar los datos del cuerpo ($5) */
+               $$.nextlist = $5.nextlist;
+               $$.breaklist = $5.breaklist;
+            }
+            ;
+
+default_opt : DEFAULT COLON M lista_sentencias {
+                $$.label_idx = $3.label_idx;
+                $$.nextlist = $4.nextlist;
+                $$.breaklist = $4.breaklist;
+                $$.falselist = NULL;
+            }
+            | /* vacio */ { 
+                $$.label_idx = cg_next_quad();
+                $$.nextlist = NULL;
+                $$.breaklist = NULL;
+                $$.falselist = makelist(cg_next_quad()); 
+            } 
+            ;
+
 M : { $$.label_idx = cg_next_quad(); } ;
 
 N : { 
@@ -251,34 +394,20 @@ N : {
     cg_emit("GOTO", NULL, NULL, NULL);
 } ;
 
-/* --- DECLARACIONES Y ASIGNACIONES (Igual que P2) --- */
+/* Declaraciones */
 declaracion : KW_INT ID   { install_var($2.lexema, T_INT, 0, 0); }
             | KW_FLOAT ID { install_var($2.lexema, T_FLOAT, 0, 0); }
             | KW_BOOL ID  { install_var($2.lexema, T_BOOL, 0, 0); }
             | KW_INT ID LBRACKET LIT_INT RBRACKET { install_var($2.lexema, T_INT, 1, atoi($4)); }
-            /* ... más declaraciones ... */
             ;
 
 asignacion : variable ASSIGN expressio {
-                /* Asignación aritmética */
-                if ($3.type == T_BOOL) yyerror("Error semántico: Asignación booleana no soportada en var numérica.");
-                
                 if ($1.ctr_var == NULL) cg_emit(":=", $3.addr, NULL, $1.addr);
                 else cg_emit("arr_set", $1.addr, $1.ctr_var, $3.addr);
              }
-           | variable ASSIGN bool_expr {
-               /* Asignación booleana (Complejo: requiere materializar el flujo en 1/0) */
-               /* PENDIENTE: Para P3 básica, asumimos variables numéricas mayormente */
-               /* Si piden variables booleanas reales:
-                  M_TRUE: x := 1, GOTO FIN
-                  M_FALSE: x := 0
-                  FIN: ...
-               */
-               yyerror("Asignación de expresiones booleanas complejas no implementada (Feature Extra).");
-           }
            ;
 
-/* --- EXPRESIONES BOOLEANAS (Cortocircuito) --- */
+/* Booleanos */
 bool_expr : bool_expr OR M bool_expr {
               /* Si $1 es TRUE, ya acabamos (es TRUE). Backpatching a $1.truelist se queda pendiente. */
               /* Si $1 es FALSE, saltamos a M ($3) para evaluar $4. */
@@ -289,7 +418,7 @@ bool_expr : bool_expr OR M bool_expr {
           | bool_expr AND M bool_expr {
               /* Si $1 es TRUE, saltamos a M ($3) para evaluar $4. */
               backpatch($1.truelist, $3.label_idx);
-              /* Si $1 es FALSE, ya acabamos. */
+              /* Si $1 es FALSE, ya acabar */
               $$.truelist = $4.truelist;
               $$.falselist = merge($1.falselist, $4.falselist);
           }
@@ -317,7 +446,7 @@ bool_expr : bool_expr OR M bool_expr {
           }
           ;
 
-/* --- EXPRESIONES ARITMÉTICAS (Jerarquía P2) --- */
+/* Aritmética */
 expressio : term
           | expressio PLUS term  { $$ = gen_binary_op("ADD", $1, $3); }
           | expressio MINUS term { $$ = gen_binary_op("SUB", $1, $3); }
@@ -330,7 +459,7 @@ term : potencia
      ;
 
 potencia : factor
-         /* | factor POW potencia ... (Implementar si se necesita, bucle manual P2) */
+         | factor POW potencia { $$ = gen_power($1, $3); }
          ;
 
 factor : LIT_INT { $$.addr = strdup($1); $$.type = T_INT; $$.ctr_var=NULL; }
@@ -352,7 +481,15 @@ variable : ID {
              $$.type = get_var_type($1.lexema);
              $$.ctr_var = NULL;
           }
-          /* ... lógica de arrays P2 ... */
+          | ID LBRACKET expressio RBRACKET {
+             char *offset_rel = cg_new_temp();
+             cg_emit("MULI", $3.addr, "4", offset_rel);
+             char *offset_final = cg_new_temp();
+             cg_emit("ADDI", offset_rel, "25", offset_final);
+             $$.addr = strdup($1.lexema);
+             $$.type = get_var_type($1.lexema);
+             $$.ctr_var = offset_final;
+          }
           ;
 
 %%

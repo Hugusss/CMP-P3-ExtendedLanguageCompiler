@@ -1,0 +1,20 @@
+// Test Crítico de Orden de Ejecución en Switch
+int x
+x := 2
+int res
+res := 0
+
+switch (x)
+    case 1:
+        res := 100
+        break
+    case 2:
+        res := 200
+        break
+    default:
+        res := 300
+fswitch
+
+// Debería ser 200. 
+// Si da 100, es que entra en el primer caso sin comprobar.
+res

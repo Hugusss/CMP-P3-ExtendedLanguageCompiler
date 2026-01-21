@@ -1,0 +1,27 @@
+int i
+int total
+total := 0
+
+// Prueba WHILE
+i := 0
+while i < 5 do
+    total := total + i
+    i := i + 1
+done
+
+// Prueba SWITCH y BREAK
+int op
+op := 2
+switch (op)
+    case 1: 
+        total := total + 10 
+        break
+    case 2: 
+        total := total + 20 
+        break
+    default: 
+        total := 0
+fswitch
+
+// Resultado esperado: 0+1+2+3+4 = 10. +20 = 30.
+total

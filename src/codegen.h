@@ -20,21 +20,17 @@ typedef struct list_node {
 /* Estructura para subir info por el parser ($$) */
 typedef struct {
     char *addr;     /* Dirección: "x", "$t1", "5" */
-    C3AType type;   /* Tipo para chequeo */
+    C3AType type;   /* Tipo */
     
-    /* Para Arrays (P2) */
-    char *ctr_var;  /* Offset acumulado */
+    char *ctr_var;  /* Offset para Arrays */
     
-    /* Para Backpatching (P3) */
-    /* truelist: saltos a ejecutar si la expresión booleana es TRUE */
-    ListNode *truelist;
-    /* falselist: saltos a ejecutar si la expresión booleana es FALSE */
-    ListNode *falselist;
-    /* nextlist: saltos a ejecutar al terminar el bloque actual */
-    ListNode *nextlist;
+    /* BACKPATCHING */
+    ListNode *truelist;   /* Saltos TRUE */
+    ListNode *falselist;  /* Saltos FALSE */
+    ListNode *nextlist;   /* Saltos de flujo normal (fin de bloque) */
+    ListNode *breaklist;  /* Saltos de break */
 
-    /* Para marcadores M (P3) */
-    int label_idx;  /* Guarda el número de instrucción actual */
+    int label_idx;  /* Marcador M */
 } C3A_Info;
 
 /* Estructura de una instrucción C3A */
@@ -45,7 +41,7 @@ typedef struct {
     char *res;      /* Resultado o Label de destino */
 } Quad;
 
-/* Funciones Básicas */
+/* Funciones */
 void cg_init();
 char* cg_new_temp();
 int cg_next_quad(); /* devuelve el número de la siguiente instrucción */
