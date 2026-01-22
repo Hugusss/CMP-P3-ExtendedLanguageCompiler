@@ -151,7 +151,14 @@ C3A_Info gen_power(C3A_Info base, C3A_Info exp) {
 }
 
 C3A_Info gen_relational_op(char *rel_op, C3A_Info a, C3A_Info b) {
-    C3A_Info res; init_info(&res);
+    C3A_Info res;
+    init_info(&res);
+    
+    if (a.type == T_STRING || b.type == T_STRING) {
+        fprintf(stderr, "Error semántico: No se pueden comparar cadenas.\n");
+        return res; // Devuelve error
+    }
+    
     res.type = T_BOOL;
     
     char *addr_a = a.addr;
@@ -280,6 +287,45 @@ sentencia : declaracion EOL { $$.nextlist = NULL; $$.breaklist = NULL; }
               $$.nextlist = merge(temp, $9.nextlist);
               $$.breaklist = merge($5.breaklist, $9.breaklist);
           }
+          /* --- REPEAT --- */
+          | REPEAT expressio DO 
+          {
+              /* $4: Acción de Inicialización */
+              if ($2.type != T_INT) yyerror("REPEAT requereix una expressió entera");
+              
+              char *count = cg_new_temp();
+              cg_emit(":=", $2.addr, NULL, count);
+              
+              /* Guardamos count en este nodo ($4) */
+              $<info>$.addr = count;
+          }
+          M /* $5: Etiqueta inicio bucle */
+          {
+              /* $6: Acción de Condición */
+              /* Recuperamos count de $4 */
+              $<info>$.falselist = makelist(cg_next_quad());
+              cg_emit("IF LEI", $<info>4.addr, "0", NULL);
+          }
+          lista_sentencias /* $7: Cuerpo */
+          DONE /* $8 */
+          {
+              /* Decrement: count := count - 1 */
+              /* Recuperamos count de $4 */
+              char *count = $<info>4.addr;
+              cg_emit("SUBI", count, "1", count);
+              
+              /* Salt incondicional a l'inici (M està a $5) */
+              char str_label[16];
+              sprintf(str_label, "%d", $5.label_idx);
+              cg_emit("GOTO", NULL, NULL, str_label);
+              
+              /* Backpatch sortida (La llista false està a l'acció $6) */
+              backpatch($<info>6.falselist, cg_next_quad());
+              
+              /* Propagar breaks (Estan a $7) */
+              $$.nextlist = $7.breaklist;
+              $$.breaklist = NULL;
+          }
           | WHILE M bool_expr DO M lista_sentencias DONE {
               /* 1. Bucle: volver a evaluar condición (M1) */
               backpatch($6.nextlist, $2.label_idx);
@@ -300,20 +346,46 @@ sentencia : declaracion EOL { $$.nextlist = NULL; $$.breaklist = NULL; }
               $$.nextlist = merge($5.truelist, $3.breaklist); /* Breaks salen del bucle */
               $$.breaklist = NULL;
           }
-          | FOR ID IN expressio RANGE expressio DO {
+          /* --- FOR --- */
+          | FOR ID IN expressio RANGE expressio DO 
+          {
+              /* $8: Inicialización */
               if ($4.type != T_INT || $6.type != T_INT) yyerror("Rango FOR debe ser entero");
               cg_emit(":=", $4.addr, NULL, $2.lexema);
-          } M { 
-              /* Test implícito: IF ID LE Limit ... */
-              /* Pero como es un solo paso, haremos el test manual con etiquetas */
-          } lista_sentencias DONE {
+          } 
+          M /* $9: Etiqueta Inicio */
+          { 
+              /* $10: Condición (Acción Incrustada) */
+              /* Guardamos el límite en $<info>$ para usarlo después */
+              
+              /* Generamos salto de salida: IF i GTI limite GOTO ??? */
+              $<info>$.falselist = makelist(cg_next_quad());
+              cg_emit("IF GTI", $2.lexema, $6.addr, NULL); 
+          } 
+          lista_sentencias /* $11 */
+          DONE 
+          {
+              /* $13: Final del bucle */
+              
+              /* 1. Incremento: i := i + 1 */
               cg_emit("ADDI", $2.lexema, "1", $2.lexema);
-              $$.nextlist = $9.breaklist; /* Breaks salen */
+              
+              /* 2. Salto incondicional al inicio (M -> $9) */
+              char str_label[16];
+              sprintf(str_label, "%d", $9.label_idx);
+              cg_emit("GOTO", NULL, NULL, str_label);
+              
+              /* 3. Rellenar la salida (Backpatching) */
+              /* Usar $<info>10 en lugar de $10 */
+              backpatch($<info>10.falselist, cg_next_quad());
+              
+              /* 4. Propagar breaks */
+              $$.nextlist = $11.breaklist; 
               $$.breaklist = NULL;
           }
           
-          /* --- SWITCH CORREGIDO --- */
-          /* CORRECCIÓN: Usamos $8 en lugar de $7 porque opt_eol y la acción {} desplazan el índice */
+          /* --- SWITCH --- */
+          /* usar $8 en lugar de $7 porque opt_eol y la acción {} desplazan el índice */
           | SWITCH LPAREN expressio RPAREN opt_eol {
               switch_push($3.addr);
           } M_switch case_list FSWITCH {

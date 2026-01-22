@@ -7,6 +7,7 @@ typedef enum {
     T_INT,
     T_FLOAT,
     T_BOOL,
+    T_STRING,
     T_ERROR
 } C3AType;
 

@@ -1,0 +1,12 @@
+// Test Bucle FOR
+int i
+int suma
+suma := 0
+
+// Sumar del 1 al 5
+for i in 1..5 do
+    suma := suma + i
+done
+
+// Esperado: 1+2+3+4+5 = 15
+suma

@@ -19,7 +19,7 @@ void setup_id() {
 
 digit       [0-9]
 enter       {digit}+
-real        {digit}+\.{digit}*([eE][+-]?{digit}+)?|{digit}+[eE][+-]?{digit}+|\.{digit}+([eE][+-]?{digit}+)?
+real        {digit}+\.{digit}+([eE][+-]?{digit}+)?|{digit}+[eE][+-]?{digit}+|\.{digit}+([eE][+-]?{digit}+)?
 identif     [a-zA-Z]([a-zA-Z0-9_])*
 
 %%
@@ -33,9 +33,9 @@ identif     [a-zA-Z]([a-zA-Z0-9_])*
 \n          { return EOL; }
 [ \t\r]+    { /* Ignorar espacios y tabs */ }
 ";"         { return SEMICOLON; }
-":"         { return COLON; }    /* NECESARIO PARA CASE  */
+":"         { return COLON; }
 ","         { return COMMA; }
-".."        { return RANGE; }    /* NECESARIO PARA FOR  */
+".."        { return RANGE; }
 "."         { return DOT; }
 "["         { return LBRACKET; }
 "]"         { return RBRACKET; }
@@ -54,21 +54,21 @@ identif     [a-zA-Z]([a-zA-Z0-9_])*
 "do"        { return DO; }
 "done"      { return DONE; }
 
-"if"        { return IF; }       /* [cite: 592] */
-"then"      { return THEN; }     /* [cite: 592] */
-"else"      { return ELSE; }     /* [cite: 600] */
-"fi"        { return FI; }       /* [cite: 594] */
+"if"        { return IF; }
+"then"      { return THEN; }
+"else"      { return ELSE; }
+"fi"        { return FI; }
 
-"while"     { return WHILE; }    /* [cite: 626] */
-"until"     { return UNTIL; }    /* [cite: 632] */
-"for"       { return FOR; }      /* [cite: 634] */
-"in"        { return IN; }       /* [cite: 634] */
-"break"     { return BREAK; }    /* [cite: 612] */
+"while"     { return WHILE; }
+"until"     { return UNTIL; }
+"for"       { return FOR; }
+"in"        { return IN; }
+"break"     { return BREAK; }
 
-"switch"    { return SWITCH; }   /* [cite: 604] */
-"case"      { return CASE; }     /*  */
-"default"   { return DEFAULT; }  /* [cite: 608] */
-"fswitch"   { return FSWITCH; }  /* [cite: 611] */
+"switch"    { return SWITCH; }
+"case"      { return CASE; }
+"default"   { return DEFAULT; }
+"fswitch"   { return FSWITCH; }
 
     /* --- OPERADORES --- */
 ":="        { return ASSIGN; }
@@ -79,15 +79,15 @@ identif     [a-zA-Z]([a-zA-Z0-9_])*
 "%"         { return MOD; }
 "**"        { return POW; }
 
-"and"       { return AND; }      /* [cite: 576] */
-"or"        { return OR; }       /* [cite: 576] */
-"not"       { return NOT; }      /* [cite: 576] */
+"and"       { return AND; }
+"or"        { return OR; }
+"not"       { return NOT; }
 ">="        { return GE; }
 "<="        { return LE; }
-"<>"        { return NEQ; }      /* [cite: 576] */
+"<>"        { return NEQ; }
 ">"         { return GT; }
 "<"         { return LT; }
-"="         { return EQ; }       /* [cite: 576] */
+"="         { return EQ; }
 
 "("         { return LPAREN; }
 ")"         { return RPAREN; }
