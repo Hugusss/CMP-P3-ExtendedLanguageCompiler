@@ -25,13 +25,13 @@ identif     [a-zA-Z]([a-zA-Z0-9_])*
 %%
 
     /* --- COMENTARIOS --- */
-"//"[^\n]* { /* Ignorar texto comentario, pero NO el \n */ }
-"#"[^\n]* { /* Ignorar texto comentario, pero NO el \n */ }
-"/*"([^*]|(\*+[^*/]))*\*+\/ { /* Comentario bloque normal */ }
+"//"[^\n]* { }
+"#"[^\n]* { }
+"/*"([^*]|(\*+[^*/]))*\*+\/ { }
 
     /* --- DELIMITADORES --- */
 \n          { return EOL; }
-[ \t\r]+    { /* Ignorar espacios y tabs */ }
+[ \t\r]+    { }
 ";"         { return SEMICOLON; }
 ":"         { return COLON; }
 ","         { return COMMA; }
@@ -106,16 +106,12 @@ identif     [a-zA-Z]([a-zA-Z0-9_])*
     /* --- LITERALES --- */
 {enter}     { yylval.literal = strdup(yytext); return LIT_INT; }
 {real}      { yylval.literal = strdup(yytext); return LIT_FLOAT; }
-
 \"[^\"\n]*\" { 
               yylval.ident.lexema = strdup(yytext + 1);
               yylval.ident.lexema[yyleng - 2] = '\0';
               yylval.ident.line = yylineno; 
               return LIT_STRING; 
             }
-
 {identif}   { setup_id(); return ID; }
-
 .           { printf("Lexical Error: %s\n", yytext); }
-
 %%

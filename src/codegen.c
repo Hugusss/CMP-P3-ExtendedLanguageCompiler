@@ -1,13 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include "codegen.h"
 
-#define MAX_QUADS 2000 /* Aumentamos límite para programas más grandes */
+#define MAX_QUADS 5000 /* Aumentado para soportar código duplicado */
 
 static int temp_counter = 1;
-static Quad code_memory[MAX_QUADS];
-static int next_quad = 1; /* empezar por línea 1 */
+static Quad code_memory[MAX_QUADS]; /* Buffer en RAM */
+static int next_quad = 1; 
 
 void cg_init() {
     temp_counter = 1;
@@ -19,17 +20,18 @@ int cg_next_quad() {
 }
 
 char* cg_new_temp() {
-    char buffer[16];
+    char buffer[20];
     sprintf(buffer, "$t%02d", temp_counter++);
     return strdup(buffer);
 }
 
 void cg_emit(char *op, char *arg1, char *arg2, char *res) {
     if (next_quad >= MAX_QUADS) {
-        fprintf(stderr, "Error: Límite de instrucciones excedido.\n");
+        fprintf(stderr, "Error Fatal: Buffer de instrucciones lleno (MAX %d).\n", MAX_QUADS);
         exit(1);
     }
     
+    /* Guardamos COPIAS en el buffer */
     code_memory[next_quad].op = op ? strdup(op) : NULL;
     code_memory[next_quad].arg1 = arg1 ? strdup(arg1) : NULL;
     code_memory[next_quad].arg2 = arg2 ? strdup(arg2) : NULL;
@@ -38,22 +40,54 @@ void cg_emit(char *op, char *arg1, char *arg2, char *res) {
     next_quad++;
 }
 
-void cg_print_all(FILE *out) {
+/* --- FUNC LOOP UNROLLING --- */
+void cg_clone_code(int start_idx, int end_idx, int times) {
+    if (times <= 0) return;
+    
+    for (int t = 0; t < times; t++) {
+        /* Desplazamiento actual respecto al original */
+        int offset = next_quad - start_idx;
+        
+        for (int i = start_idx; i < end_idx; i++) {
+            Quad src = code_memory[i];
+            
+            char *new_op = src.op ? strdup(src.op) : NULL;
+            char *new_arg1 = src.arg1 ? strdup(src.arg1) : NULL;
+            char *new_arg2 = src.arg2 ? strdup(src.arg2) : NULL;
+            char *new_res = src.res ? strdup(src.res) : NULL;
+
+            /* REAJUSTE DE ETIQUETAS: Si un salto apunta DENTRO del bloque copiado,
+               hay que moverlo para que apunte dentro de la COPIA */
+            if (new_res && (strcmp(new_op, "GOTO") == 0 || strncmp(new_op, "IF", 2) == 0)) {
+                if (isdigit(new_res[0])) {
+                    int target = atoi(new_res);
+                    if (target >= start_idx && target < end_idx) {
+                        char buff[20];
+                        sprintf(buff, "%d", target + offset);
+                        free(new_res);
+                        new_res = strdup(buff);
+                    }
+                }
+            }
+            
+            cg_emit(new_op, new_arg1, new_arg2, new_res);
+            
+            /* liberar temporales locales (cg_emit ya hizo su copia) */
+            if (new_op) free(new_op);
+            if (new_arg1) free(new_arg1);
+            if (new_arg2) free(new_arg2);
+            if (new_res) free(new_res);
+        }
+    }
+}
+
+void cg_dump_code(FILE *out) {
     for (int i = 1; i < next_quad; i++) {
         Quad q = code_memory[i];
         fprintf(out, "%d: ", i);
         
-        /* 1. Saltos y HALT */
         if (q.op && strncmp(q.op, "IF", 2) == 0) {
-            /* Formato: IF x REL y GOTO L */
-            /* El operador REL viene pegado o separado, ej "IFLT" o "IF LT" */
-            /* Asumimos que parser envía "IF LT" o similar */
-            /* Truco: Si op es "IF LTI", saltamos 3 chars para imprimir solo "LTI" */
-            char *rel = q.op;
-            if (strncmp(rel, "IF ", 3) == 0) rel += 3;
-            else if (strncmp(rel, "IF", 2) == 0) rel += 2;
-            
-            fprintf(out, "IF %s %s %s GOTO %s\n", q.arg1, rel, q.arg2, q.res ? q.res : "???");
+            fprintf(out, "%s %s %s GOTO %s\n", q.op, q.arg1, q.arg2, q.res ? q.res : "???");
         }
         else if (q.op && strcmp(q.op, "GOTO") == 0) {
             fprintf(out, "GOTO %s\n", q.res ? q.res : "???");
@@ -92,24 +126,13 @@ void cg_print_all(FILE *out) {
         else if (q.arg1 && q.res) {
             fprintf(out, "%s := %s %s\n", q.res, q.op, q.arg1);
         }
-        
         else {
-            /* Fallback genérico */
-            fprintf(out, "%s %s %s %s\n", q.op, q.arg1 ? q.arg1 : "", q.arg2 ? q.arg2 : "", q.res ? q.res : "");
+            fprintf(out, "%s %s %s %s\n", q.op ? q.op : "", q.arg1 ? q.arg1 : "", q.arg2 ? q.arg2 : "", q.res ? q.res : "");
         }
     }
 }
 
-char* type_to_opcode(char *base_op, C3AType t) {
-    static char buffer[16];
-    char suffix = (t == T_FLOAT) ? 'F' : 'I';
-    sprintf(buffer, "%s%c", base_op, suffix);
-    return strdup(buffer);
-}
-
-/* --- IMPLEMENTACIÓN DE BACKPATCHING --- */
-
-/* Crea una lista nueva con un solo índice */
+/* --- BACKPATCHING --- */
 ListNode* makelist(int i) {
     ListNode *node = (ListNode*)malloc(sizeof(ListNode));
     node->instr_idx = i;
@@ -121,34 +144,32 @@ ListNode* makelist(int i) {
 ListNode* merge(ListNode *l1, ListNode *l2) {
     if (!l1) return l2;
     if (!l2) return l1;
-    
     ListNode *p = l1;
-    while (p->next != NULL) {
-        p = p->next;
-    }
+    while (p->next != NULL) p = p->next;
     p->next = l2;
     return l1;
 }
 
 /* Rellena las instrucciones pendientes con la etiqueta destino */
-void backpatch(ListNode *l, int label_idx) {
-    char label_str[16];
+void cg_backpatch(ListNode *l, int label_idx) {
+    char label_str[20];
     sprintf(label_str, "%d", label_idx);
-    
-    ListNode *current = l;
-    while (current != NULL) {
-        int idx = current->instr_idx;
-        
-        /* Verificación de seguridad */
+    ListNode *curr = l;
+    while (curr != NULL) {
+        int idx = curr->instr_idx;
         if (idx > 0 && idx < next_quad) {
-            /* Liberamos el placeholder si existía y asignamos la etiqueta */
             if (code_memory[idx].res) free(code_memory[idx].res);
             code_memory[idx].res = strdup(label_str);
         }
-        
-        /* Avanzamos y liberamos el nodo de la lista (ya no sirve) */
-        ListNode *temp = current;
-        current = current->next;
+        ListNode *temp = curr;
+        curr = curr->next;
         free(temp);
     }
+}
+
+char* type_to_opcode(char *base_op, C3AType t) {
+    static char buffer[20];
+    char suffix = (t == T_FLOAT) ? 'F' : 'I';
+    sprintf(buffer, "%s%c", base_op, suffix);
+    return strdup(buffer);
 }

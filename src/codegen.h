@@ -22,16 +22,20 @@ typedef struct list_node {
 typedef struct {
     char *addr;     /* Dirección: "x", "$t1", "5" */
     C3AType type;   /* Tipo */
-    
     char *ctr_var;  /* Offset para Arrays */
     
     /* BACKPATCHING */
-    ListNode *truelist;   /* Saltos TRUE */
-    ListNode *falselist;  /* Saltos FALSE */
-    ListNode *nextlist;   /* Saltos de flujo normal (fin de bloque) */
-    ListNode *breaklist;  /* Saltos de break */
+    ListNode *truelist;
+    ListNode *falselist;
+    ListNode *nextlist;
+    ListNode *breaklist;
 
-    int label_idx;  /* Marcador M */
+    int label_idx;  /* Marcador M (inicio de bloque) */
+    
+    /* --- SOPORTE UNROLLING --- */
+    int is_unrollable;  /* 1 si es literal pequeño */
+    int unroll_count;   /* Cuántas veces repetir */
+    int instr_start;    /* Dónde empieza el cuerpo */
 } C3A_Info;
 
 /* Estructura de una instrucción C3A */
@@ -42,21 +46,26 @@ typedef struct {
     char *res;      /* Resultado o Label de destino */
 } Quad;
 
-/* Funciones */
+/* Funciones de Gestión */
 void cg_init();
 char* cg_new_temp();
-int cg_next_quad(); /* devuelve el número de la siguiente instrucción */
+char* cg_new_label(); 
+int cg_next_quad();
 
-/* Emitir instrucciones */
+/* Emisión y Manipulación */
 void cg_emit(char *op, char *arg1, char *arg2, char *res);
-void cg_print_all(FILE *out);
+void cg_backpatch(ListNode *l, int label_idx);
 
-/* Helper de tipos */
-char* type_to_opcode(char *base_op, C3AType t);
+/* --- FUNCIONES IMP. --- */
+void cg_clone_code(int start_idx, int end_idx, int times); /* Unrolling */
+void cg_dump_code(FILE *out); /* Volcar buffer a disco */
 
-/* --- FUNCIONES PARA BACKPATCHING --- */
+/* Helpers */
 ListNode* makelist(int i);
 ListNode* merge(ListNode *l1, ListNode *l2);
-void backpatch(ListNode *l, int label_idx);
+char* type_to_opcode(char *base_op, C3AType t);
+
+/* Macro para compatibilidad */
+#define backpatch cg_backpatch
 
 #endif
