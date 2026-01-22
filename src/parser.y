@@ -380,9 +380,30 @@ term : factor { $$ = $1; }
      | term MOD factor { $$ = gen_binary_op("MOD", $1, $3); }
      ;
 
-/* Nivel 6: Potencia y Menos Unario */
-factor : atom { $$ = $1; }
-       | atom POW factor { $$ = gen_power($1, $3); }
+/* Nivel 6: Potencia (Right associative) y MENOS UNARIO */
+factor : atom { 
+            /* Si es un acceso a array (R-Value), cargar el valor ahora */
+           if ($1.ctr_var != NULL) {
+               char *t = cg_new_temp();
+               cg_emit("arr_get", $1.addr, $1.ctr_var, t);
+               init_info(&$$);
+               $$.addr = t;        /* Ahora trabajar con el valor temporal */
+               $$.type = $1.type;
+               $$.ctr_var = NULL;  /* Ya no es una referencia */
+           } else {
+               $$ = $1; 
+           }
+       }
+       | atom POW factor {
+           C3A_Info base = $1;
+           if (base.ctr_var != NULL) {
+               char *t = cg_new_temp();
+               cg_emit("arr_get", base.addr, base.ctr_var, t);
+               base.addr = t;
+               base.ctr_var = NULL;
+           }
+           $$ = gen_power(base, $3); 
+       }
        | MINUS factor { $$ = gen_unary_op($2); }
        ;
 

@@ -1,0 +1,19 @@
+// Test de Arrays con índices calculados
+int i
+int arr[5]
+int res
+
+// 1. Rellenar array usando un bucle
+// Esto prueba: Asignación a array con índice variable
+i := 0
+while i < 5 do
+    arr[i] := i * 10
+    i := i + 1
+done
+
+// 2. Acceder usando una expresión aritmética
+// Esto prueba: arr[3] -> Debería ser 30
+// El compilador debe calcular (1+2) -> $tX -> $tX * 4 -> Offset
+res := arr[1 + 2]
+
+res
